@@ -537,6 +537,7 @@ export default function App() {
   // Seleksi 2D seperti Excel: { rowAnchor, rowEnd, colAnchor, colEnd }
   const [sel, setSel] = useState(null)
   const cellRefs = useRef({})
+  const dragRef  = useRef(null) // { active: bool, startRow, startCol }
 
   // ── Undo / Redo history ───────────────────────────────────────────────────
   const historyRef = useRef([])   // stack of rows snapshots
@@ -566,6 +567,34 @@ export default function App() {
     const next = futureRef.current[futureRef.current.length - 1]
     futureRef.current = futureRef.current.slice(0, -1)
     setRows(cur => { historyRef.current = [...historyRef.current, cur]; return next })
+  }
+
+  // ── Mouse drag selection (Excel-like) ──────────────────────────────────────
+  const onCellMouseDown = (e, rowIdx, colName) => {
+    if (e.button !== 0) return // left click only
+    const ci = NAV_COLS.indexOf(colName)
+    if (ci < 0) return
+    dragRef.current = { active: true, startRow: rowIdx, startCol: ci }
+    setSel({ rA: rowIdx, rE: rowIdx, cA: ci, cE: ci })
+    // Focus the cell
+    const el = cellRefs.current[`${rowIdx}-${colName}`]
+    if (el) { el.focus(); el.select?.() }
+  }
+
+  const onCellMouseEnter = (e, rowIdx, colName) => {
+    if (!dragRef.current?.active) return
+    const ci = NAV_COLS.indexOf(colName)
+    if (ci < 0) return
+    setSel({
+      rA: dragRef.current.startRow,
+      rE: rowIdx,
+      cA: dragRef.current.startCol,
+      cE: ci,
+    })
+  }
+
+  const onCellMouseUp = () => {
+    if (dragRef.current) dragRef.current.active = false
   }
 
   // Kolom yang bisa diblok/paste/hapus/fill-down (operator, equipment, activity ikut serta)
@@ -686,18 +715,27 @@ export default function App() {
         return
       }
     }
-    // Ctrl+D → fill down dari baris ini ke bawah (semua kolom FILL_COLS)
-    if (e.ctrlKey && e.key === 'd' && FILL_COLS.includes(colName)) {
+    // Ctrl+D → fill down SEMUA kolom dari baris anchor ke seluruh baris dalam seleksi (Excel-like)
+    if (e.ctrlKey && (e.key === 'd' || e.key === 'D')) {
       e.preventDefault()
-      const val = rows[rowIdx][colName]
+      // Tentukan range: gunakan seleksi jika ada, atau dari rowIdx ke rowIdx+1
+      const rLo = sel ? Math.min(sel.rA, sel.rE) : rowIdx
+      const rHi = sel ? Math.max(sel.rA, sel.rE) : Math.min(rows.length - 1, rowIdx + 1)
+      const srcRow = rows[rLo] // baris paling atas sebagai sumber
+      if (rHi <= rLo) return   // tidak ada baris tujuan
       setRowsWithHistory(prev => prev.map((r, idx) => {
-        if (idx < rowIdx) return r
-        if (colName === 'time_start' || colName === 'time_end') return { ...r, [colName]: fmtTime(String(val)) }
-        if (colName === 'activity_code') {
-          const found = ACTIVITY_CODES.find(a => a.kode === val)
-          return { ...r, activity_code: val, activity_desc: found ? found.desc : r.activity_desc }
-        }
-        return { ...r, [colName]: val }
+        if (idx <= rLo || idx > rHi) return r // skip baris sumber & di luar range
+        const updated = { ...r }
+        FILL_COLS.forEach(f => {
+          if (f === 'time_start' || f === 'time_end') updated[f] = srcRow[f]
+          else if (f === 'activity_code') {
+            updated.activity_code = srcRow.activity_code
+            updated.activity_desc = srcRow.activity_desc
+          } else {
+            updated[f] = srcRow[f]
+          }
+        })
+        return updated
       }))
       return
     }
@@ -772,18 +810,20 @@ export default function App() {
   // ── Global keyboard shortcuts: Ctrl+Z (undo), Ctrl+Y (redo) ─────────────
   useEffect(() => {
     const handler = (e) => {
-      // Only fire when NOT typing inside an input/textarea/contenteditable
-      const tag = document.activeElement?.tagName
-      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable
-      if (e.ctrlKey && e.key === 'z' && !e.shiftKey) {
-        if (isInput) return // let native undo handle text fields
+      // Ctrl+Z → undo row state (selalu aktif, override native browser undo)
+      if (e.ctrlKey && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
         e.preventDefault()
+        e.stopPropagation()
         undo()
+        return
       }
-      if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) {
-        if (isInput) return
+      // Ctrl+Y atau Ctrl+Shift+Z → redo
+      if ((e.ctrlKey && (e.key === 'y' || e.key === 'Y')) ||
+          (e.ctrlKey && e.shiftKey && (e.key === 'z' || e.key === 'Z'))) {
         e.preventDefault()
+        e.stopPropagation()
         redo()
+        return
       }
     }
     window.addEventListener('keydown', handler)
@@ -1033,7 +1073,7 @@ export default function App() {
                 <th style={S.thSub}>Total</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody onMouseLeave={onCellMouseUp}>
               {rows.map((row, i) => {
                 const total = hitungTotal(row.time_start, row.time_end)
                 const totalHM = row.hm_start && row.hm_finish
@@ -1050,7 +1090,7 @@ export default function App() {
                   },
                 })
                 return (
-                  <tr key={row.id} style={i % 2 === 0 ? S.rowEven(shiftKind) : S.rowOdd}>
+                  <tr key={row.id} style={i % 2 === 0 ? S.rowEven(shiftKind) : S.rowOdd} onMouseUp={onCellMouseUp}>
                     {/* Date — readonly dari form header. Accent bar kiri menandakan Shift aktif */}
                     <td style={{ ...S.td, ...S.rowAccent(shiftKind), fontSize: 11, color: t.subtitle }}>{tanggal || '—'}</td>
                     {/* Shift — readonly dari form header, ditampilkan sebagai badge */}
