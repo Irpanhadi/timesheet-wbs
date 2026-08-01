@@ -1,14 +1,14 @@
-import PlaceholderPage from './PlaceholderPage'
+import MasterUnit from './MasterUnit'
 
+// MasterData sekarang menampilkan Master Unit.
+// Saat sub-halaman master data bertambah (operator, dll), halaman ini bisa
+// dijadikan hub navigasi — untuk saat ini langsung render MasterUnit.
 export default function MasterData({ isDark, onToggleTheme, onBack }) {
   return (
-    <PlaceholderPage
+    <MasterUnit
       isDark={isDark}
       onToggleTheme={onToggleTheme}
       onBack={onBack}
-      icon="🗂️"
-      title="Master Data"
-      description="Halaman untuk mengelola data unit dan operator. Fitur ini akan segera hadir."
     />
   )
 }
