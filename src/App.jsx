@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './supabase'
+import GenerateTimesheet from './GenerateTimesheet'
+import Dashboard from './Dashboard'
+import MasterData from './MasterData'
+import MasterTemplate from './MasterTemplate'
+import ReviewTimesheet from './ReviewTimesheet'
 
 // ── Icon set kecil (inline SVG, tanpa dependency tambahan) ───────────────
 const IconPlus = (p) => (
@@ -525,6 +530,7 @@ function makeStyles(t) {
 
 export default function App() {
   const [isDark, setIsDark] = useState(true)
+  const [activePage, setActivePage] = useState('dashboard')
   const [tanggal, setTanggal] = useState('')
   const [shift, setShift] = useState('1')
   const [rows, setRows] = useState([emptyRow()])
@@ -963,6 +969,53 @@ export default function App() {
     setLoading(false)
   }
 
+  // ── Routing: tampilkan halaman lain jika bukan 'input' ─────────────────
+  if (activePage === 'dashboard') {
+    return (
+      <Dashboard
+        isDark={isDark}
+        onToggleTheme={() => setIsDark(v => !v)}
+        onNavigate={(page) => setActivePage(page)}
+      />
+    )
+  }
+  if (activePage === 'generate') {
+    return (
+      <GenerateTimesheet
+        isDark={isDark}
+        onToggleTheme={() => setIsDark(v => !v)}
+        onBack={() => setActivePage('dashboard')}
+      />
+    )
+  }
+  if (activePage === 'master-data') {
+    return (
+      <MasterData
+        isDark={isDark}
+        onToggleTheme={() => setIsDark(v => !v)}
+        onBack={() => setActivePage('dashboard')}
+      />
+    )
+  }
+  if (activePage === 'master-template') {
+    return (
+      <MasterTemplate
+        isDark={isDark}
+        onToggleTheme={() => setIsDark(v => !v)}
+        onBack={() => setActivePage('dashboard')}
+      />
+    )
+  }
+  if (activePage === 'review-timesheet') {
+    return (
+      <ReviewTimesheet
+        isDark={isDark}
+        onToggleTheme={() => setIsDark(v => !v)}
+        onBack={() => setActivePage('dashboard')}
+      />
+    )
+  }
+
   return (
     <div style={S.app}>
       <div style={S.card}>
@@ -977,6 +1030,26 @@ export default function App() {
             <h1 style={S.title}>Input Timesheet</h1>
           </div>
           <div style={S.headerRight}>
+            <button
+              className="ts-btn"
+              style={S.toggleBtn}
+              onClick={() => setActivePage('dashboard')}
+            >
+              ← Dashboard
+            </button>
+            <button
+              className="ts-btn"
+              style={{
+                ...S.toggleBtn,
+                background: t.btnSaveBg,
+                border: `1px solid ${t.btnSaveBorder}`,
+                color: t.btnSaveColor,
+                fontWeight: 700,
+              }}
+              onClick={() => setActivePage('generate')}
+            >
+              ⚡ Generate Timesheet
+            </button>
             <button className="ts-btn" style={S.toggleBtn} onClick={() => setIsDark(!isDark)}>
               {isDark ? 'Siang' : 'Malam'}
             </button>

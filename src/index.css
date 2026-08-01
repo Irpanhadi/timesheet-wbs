@@ -88,6 +88,9 @@ body {
 #root ::-webkit-scrollbar-track {
   background: transparent;
 }
+@keyframes ts-spin {
+  to { transform: rotate(360deg); }
+}
 
 #root {
   width: 100%;
