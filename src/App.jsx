@@ -1,12 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { supabase } from './supabase'
-import GenerateTimesheet from './GenerateTimesheet'
-import Dashboard from './Dashboard'
-import MasterData from './MasterData'
-import MasterTemplate from './MasterTemplate'
-import ReviewTimesheet from './ReviewTimesheet'
-
 // ── Icon set kecil (inline SVG, tanpa dependency tambahan) ───────────────
 const IconPlus = (p) => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" {...p}>
@@ -17,6 +11,13 @@ const IconSave = (p) => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" {...p}>
     <path d="M5 3.5h11.5L19 6v14.5H5z" />
     <path d="M8 3.5V9h8V3.5M8 20.5V14h8v6.5" />
+  </svg>
+)
+
+const IconCopy = (p) => (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" {...p}>
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
   </svg>
 )
 
@@ -124,8 +125,7 @@ function AutocompleteInput({
         tabIndex={tabIndex ?? 0}
         style={{
           ...inputStyle,
-          // Highlight biru saat sel masuk dalam blok seleksi (sama persis kolom jam/HM)
-          ...(selected ? { background: '#2C7A7B44', outline: '2px solid #3C6E71' } : {}),
+          ...(selected ? { background: '#2C7A7B44' } : {}),
         }}
       />
       {open && filtered.length > 0 && createPortal(
@@ -467,19 +467,19 @@ function makeStyles(t) {
     },
     tdNum: { fontVariantNumeric: 'tabular-nums' },
     tdInput: {
-      background: t.inputBg, border: `1px solid ${t.inputBorder}`,
-      borderRadius: 6, padding: '6px 8px', color: t.inputColor,
+      background: 'transparent', border: 'none',
+      borderRadius: 0, padding: '4px 6px', color: t.inputColor,
       fontSize: 12.5, width: '100%', outline: 'none', boxSizing: 'border-box',
-      transition: 'border-color 0.15s, box-shadow 0.15s',
       fontFamily: 'inherit', fontVariantNumeric: 'tabular-nums',
+      textAlign: 'center',
     },
     tdSelect: {
-      background: t.selectBg, border: `1px solid ${t.inputBorder}`,
-      borderRadius: 6, padding: '6px 4px', color: t.inputColor,
-      fontSize: 11, width: '100%', outline: 'none', cursor: 'pointer',
-      transition: 'border-color 0.15s', fontFamily: 'inherit',
+      background: 'transparent', border: 'none',
+      borderRadius: 0, padding: '4px 4px', color: t.inputColor,
+      fontSize: 12, width: '100%', outline: 'none', cursor: 'pointer',
+      fontFamily: 'inherit', textAlign: 'center',
     },
-    focusGlow: { borderColor: t.focusBorder, boxShadow: `0 0 0 3px ${t.focusRing}` },
+    focusGlow: { background: 'rgba(58,196,204,0.08)' },
 
     // ── Buttons ──────────────────────────────────────────
     btnAdd: {
@@ -530,10 +530,11 @@ function makeStyles(t) {
 
 export default function App() {
   const [isDark, setIsDark] = useState(true)
-  const [activePage, setActivePage] = useState('dashboard')
   const [tanggal, setTanggal] = useState('')
   const [shift, setShift] = useState('1')
   const [rows, setRows] = useState([emptyRow()])
+  const [dupRows, setDupRows] = useState([])   // hasil duplikat semua FD
+  const [activeTab, setActiveTab] = useState('template') // 'template' | 'duplikat'
   const [loading, setLoading] = useState(false)
   const [sukses, setSukses] = useState(false)
   const [penginput, setPenginput] = useState('')
@@ -542,6 +543,7 @@ export default function App() {
   const [operatorMap, setOperatorMap] = useState({})
   // Seleksi 2D seperti Excel: { rowAnchor, rowEnd, colAnchor, colEnd }
   const [sel, setSel] = useState(null)
+  const [lastFocusedRow, setLastFocusedRow] = useState(0)
   const cellRefs = useRef({})
   const dragRef  = useRef(null) // { active: bool, startRow, startCol }
 
@@ -582,6 +584,7 @@ export default function App() {
     if (ci < 0) return
     dragRef.current = { active: true, startRow: rowIdx, startCol: ci }
     setSel({ rA: rowIdx, rE: rowIdx, cA: ci, cE: ci })
+    setLastFocusedRow(rowIdx)
     // Focus the cell
     const el = cellRefs.current[`${rowIdx}-${colName}`]
     if (el) { el.focus(); el.select?.() }
@@ -924,6 +927,14 @@ export default function App() {
     setRowsWithHistory(updated.map((r, idx) => ({ ...r, no_urut: idx + 1 })))
   }
 
+  // Duplikat baris i: salin semua isi (termasuk jam, HM, activity, dst) ke baris baru di bawahnya
+  const duplikatRow = (i) => {
+    const src = rows[i]
+    const dupRow = { ...src }
+    const updated = [...rows.slice(0, i + 1), dupRow, ...rows.slice(i + 1)]
+    setRowsWithHistory(updated.map((r, idx) => ({ ...r, no_urut: idx + 1 })))
+  }
+
   // Fill-down: isi baris bawah dengan nilai baris i pada field tertentu
   const fillDown = (i, field, value) => {
     setRows(prev => prev.map((r, idx) => {
@@ -969,53 +980,6 @@ export default function App() {
     setLoading(false)
   }
 
-  // ── Routing: tampilkan halaman lain jika bukan 'input' ─────────────────
-  if (activePage === 'dashboard') {
-    return (
-      <Dashboard
-        isDark={isDark}
-        onToggleTheme={() => setIsDark(v => !v)}
-        onNavigate={(page) => setActivePage(page)}
-      />
-    )
-  }
-  if (activePage === 'generate') {
-    return (
-      <GenerateTimesheet
-        isDark={isDark}
-        onToggleTheme={() => setIsDark(v => !v)}
-        onBack={() => setActivePage('dashboard')}
-      />
-    )
-  }
-  if (activePage === 'master-data') {
-    return (
-      <MasterData
-        isDark={isDark}
-        onToggleTheme={() => setIsDark(v => !v)}
-        onBack={() => setActivePage('dashboard')}
-      />
-    )
-  }
-  if (activePage === 'master-template') {
-    return (
-      <MasterTemplate
-        isDark={isDark}
-        onToggleTheme={() => setIsDark(v => !v)}
-        onBack={() => setActivePage('dashboard')}
-      />
-    )
-  }
-  if (activePage === 'review-timesheet') {
-    return (
-      <ReviewTimesheet
-        isDark={isDark}
-        onToggleTheme={() => setIsDark(v => !v)}
-        onBack={() => setActivePage('dashboard')}
-      />
-    )
-  }
-
   return (
     <div style={S.app}>
       <div style={S.card}>
@@ -1030,33 +994,31 @@ export default function App() {
             <h1 style={S.title}>Input Timesheet</h1>
           </div>
           <div style={S.headerRight}>
-            <button
-              className="ts-btn"
-              style={S.toggleBtn}
-              onClick={() => setActivePage('dashboard')}
-            >
-              ← Dashboard
-            </button>
-            <button
-              className="ts-btn"
-              style={{
-                ...S.toggleBtn,
-                background: t.btnSaveBg,
-                border: `1px solid ${t.btnSaveBorder}`,
-                color: t.btnSaveColor,
-                fontWeight: 700,
-              }}
-              onClick={() => setActivePage('generate')}
-            >
-              ⚡ Generate Timesheet
-            </button>
             <button className="ts-btn" style={S.toggleBtn} onClick={() => setIsDark(!isDark)}>
               {isDark ? 'Siang' : 'Malam'}
             </button>
           </div>
         </div>
 
+        {/* Tab Navigation */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: `2px solid ${t.cardBorder}` }}>
+          {[
+            { key: 'template', label: '📋 Template' },
+            { key: 'duplikat', label: `📄 Hasil Duplikat${dupRows.length > 0 ? ` (${dupRows.length} baris)` : ''}` },
+          ].map(tab => (
+            <button key={tab.key} className="ts-btn" onClick={() => setActiveTab(tab.key)} style={{
+              padding: '9px 20px', fontWeight: 700, fontSize: 13, border: 'none', borderRadius: '8px 8px 0 0',
+              cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s',
+              background: activeTab === tab.key ? t.panelBg : 'transparent',
+              color: activeTab === tab.key ? t.title : t.dim,
+              borderBottom: activeTab === tab.key ? `2px solid ${t.focusBorder}` : '2px solid transparent',
+              marginBottom: -2,
+            }}>{tab.label}</button>
+          ))}
+        </div>
+
         {/* Control panel: filter + shift selector */}
+        {activeTab === 'template' && <>
         <div style={S.panel}>
           <div style={S.formRow}>
             <div style={S.formGroup}>
@@ -1157,6 +1119,7 @@ export default function App() {
                   tabIndex: 0,
                   onKeyDown: e => handleCellKey(e, i, col),
                   onFocus: e => {
+                    setLastFocusedRow(i)
                     if (!e.shiftKey) {
                       setSel({ rA: i, rE: i, cA: NAV_COLS.indexOf(col), cE: NAV_COLS.indexOf(col) })
                     }
@@ -1250,7 +1213,7 @@ export default function App() {
                         type="text"
                         value={row.time_start}
                         onChange={e => updateRow(i, 'time_start', fmtTime(e.target.value))}
-                        style={{ ...S.tdInput, ...(isSel(i,'time_start') ? { background:'#2C7A7B44', outline:'2px solid #3C6E71' } : {}) }}
+                        style={{ ...S.tdInput, ...(isSel(i,'time_start') ? { background:'#2C7A7B44' } : {}) }}
                         placeholder="--:--"
                         maxLength={5}
                         title="Shift+↑↓←→ blok | Ctrl+D isi bawah | Ctrl+Z undo | Ctrl+Y redo"
@@ -1259,7 +1222,7 @@ export default function App() {
                           if (e.key === 'F2') { e.preventDefault(); const el = e.target; el.setSelectionRange(el.value.length, el.value.length) }
                           else handleCellKey(e, i, 'time_start')
                         }}
-                        onFocus={e => { if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('time_start'), cE: COL_ORDER.indexOf('time_start') }) }}
+                        onFocus={e => { setLastFocusedRow(i); if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('time_start'), cE: COL_ORDER.indexOf('time_start') }) }}
                         onPaste={e => {
                           e.preventDefault()
                           const v = e.clipboardData.getData('text').trim()
@@ -1272,7 +1235,7 @@ export default function App() {
                         type="text"
                         value={row.time_end}
                         onChange={e => updateRow(i, 'time_end', fmtTime(e.target.value))}
-                        style={{ ...S.tdInput, ...(isSel(i,'time_end') ? { background:'#2C7A7B44', outline:'2px solid #3C6E71' } : {}) }}
+                        style={{ ...S.tdInput, ...(isSel(i,'time_end') ? { background:'#2C7A7B44' } : {}) }}
                         placeholder="--:--"
                         maxLength={5}
                         title="Shift+↑↓←→ blok | Ctrl+D isi bawah | Ctrl+Z undo | Ctrl+Y redo"
@@ -1281,7 +1244,7 @@ export default function App() {
                           if (e.key === 'F2') { e.preventDefault(); const el = e.target; el.setSelectionRange(el.value.length, el.value.length) }
                           else handleCellKey(e, i, 'time_end')
                         }}
-                        onFocus={e => { if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('time_end'), cE: COL_ORDER.indexOf('time_end') }) }}
+                        onFocus={e => { setLastFocusedRow(i); if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('time_end'), cE: COL_ORDER.indexOf('time_end') }) }}
                         onPaste={e => {
                           e.preventDefault()
                           const v = e.clipboardData.getData('text').trim()
@@ -1296,7 +1259,7 @@ export default function App() {
                         inputMode="decimal"
                         value={row.hm_start}
                         onChange={e => updateRow(i, 'hm_start', fmtNum(e.target.value))}
-                        style={{ ...S.tdInput, ...(isSel(i,'hm_start') ? { background:'#2C7A7B44', outline:'2px solid #3C6E71' } : {}) }}
+                        style={{ ...S.tdInput, ...(isSel(i,'hm_start') ? { background:'#2C7A7B44' } : {}) }}
                         placeholder="0"
                         title="Shift+↑↓←→ blok | Ctrl+D isi bawah | Ctrl+Z undo | Ctrl+Y redo"
                         {...cell('hm_start')}
@@ -1304,7 +1267,7 @@ export default function App() {
                           if (e.key === 'F2') { e.preventDefault(); const el = e.target; el.setSelectionRange(el.value.length, el.value.length) }
                           else handleCellKey(e, i, 'hm_start')
                         }}
-                        onFocus={e => { if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('hm_start'), cE: COL_ORDER.indexOf('hm_start') }) }}
+                        onFocus={e => { setLastFocusedRow(i); if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('hm_start'), cE: COL_ORDER.indexOf('hm_start') }) }}
                         onPaste={e => {
                           e.preventDefault()
                           const v = fmtNum(e.clipboardData.getData('text').trim())
@@ -1318,7 +1281,7 @@ export default function App() {
                         inputMode="decimal"
                         value={row.hm_finish}
                         onChange={e => updateRow(i, 'hm_finish', fmtNum(e.target.value))}
-                        style={{ ...S.tdInput, ...(isSel(i,'hm_finish') ? { background:'#2C7A7B44', outline:'2px solid #3C6E71' } : {}) }}
+                        style={{ ...S.tdInput, ...(isSel(i,'hm_finish') ? { background:'#2C7A7B44' } : {}) }}
                         placeholder="0"
                         title="Shift+↑↓←→ blok | Ctrl+D isi bawah | Ctrl+Z undo | Ctrl+Y redo"
                         {...cell('hm_finish')}
@@ -1326,7 +1289,7 @@ export default function App() {
                           if (e.key === 'F2') { e.preventDefault(); const el = e.target; el.setSelectionRange(el.value.length, el.value.length) }
                           else handleCellKey(e, i, 'hm_finish')
                         }}
-                        onFocus={e => { if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('hm_finish'), cE: COL_ORDER.indexOf('hm_finish') }) }}
+                        onFocus={e => { setLastFocusedRow(i); if (!e.shiftKey) setSel({ rA: i, rE: i, cA: COL_ORDER.indexOf('hm_finish'), cE: COL_ORDER.indexOf('hm_finish') }) }}
                         onPaste={e => {
                           e.preventDefault()
                           const v = fmtNum(e.clipboardData.getData('text').trim())
@@ -1370,6 +1333,35 @@ export default function App() {
         {/* Actions */}
         <div style={{ marginTop: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="ts-btn" onClick={tambahRow} style={S.btnAdd}><IconPlus /> Tambah Baris</button>
+          <button
+            className="ts-btn"
+            onClick={() => {
+              const FD_LIST = [
+                ...Array.from({length: 49}, (_, i) => `FD${String(23001 + i).padStart(5,'0')}`),
+                'FD23209',
+                'FD23213', 'FD23214', 'FD23215',
+              ]
+
+              const allDup = []
+              FD_LIST.forEach(fdNum => {
+                rows.forEach(r => {
+                  allDup.push({
+                    ...r,
+                    id: newRowId(),
+                    operator: '',
+                    equipment: fdNum,
+                    number: '',
+                    hm_start: '',
+                    hm_finish: '',
+                  })
+                })
+              })
+              setDupRows(allDup.map((r, idx) => ({ ...r, no_urut: idx + 1 })))
+              setActiveTab('duplikat')
+            }}
+            title="Duplikat semua baris timesheet ke bawah"
+            style={{ ...S.btnAdd, background: 'rgba(99,102,241,0.12)', color: '#818CF8', border: '1px solid rgba(99,102,241,0.40)' }}
+          ><IconCopy /> Duplikat Timesheet</button>
           <button className="ts-btn" onClick={simpan} disabled={loading} style={{ ...S.btnSave, opacity: loading ? 0.75 : 1, cursor: loading ? 'default' : 'pointer' }}>
             <IconSave /> {loading ? 'Menyimpan…' : 'Simpan Data'}
           </button>
@@ -1416,6 +1408,159 @@ export default function App() {
         </div>
 
         {sukses && <div style={S.successBanner}>✅ Data berhasil disimpan ke database!</div>}
+        </>}
+
+        {/* Tab Duplikat */}
+        {activeTab === 'duplikat' && (
+          <div>
+            {dupRows.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 60, color: t.dim, fontSize: 14 }}>
+                Belum ada duplikat. Kembali ke tab Template dan tekan "Duplikat Timesheet".
+              </div>
+            ) : (
+              <>
+                <div style={S.tableWrapper}>
+                  <table style={S.table}>
+                    <colgroup>
+                      <col style={{ width: '5%' }} />
+                      <col style={{ width: '4%' }} />
+                      <col style={{ width: '4%' }} />
+                      <col style={{ width: '10%' }} />
+                      <col style={{ width: '7%' }} />
+                      <col style={{ width: '4%' }} />
+                      <col style={{ width: '5%' }} />
+                      <col style={{ width: '5%' }} />
+                      <col style={{ width: '5%' }} />
+                      <col style={{ width: '5%' }} />
+                      <col style={{ width: '4%' }} />
+                      <col style={{ width: '6%' }} />
+                      <col style={{ width: '6%' }} />
+                      <col style={{ width: '5%' }} />
+                      <col style={{ width: '10%' }} />
+                      <col style={{ width: '10%' }} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th style={S.th} rowSpan={2}>Date</th>
+                        <th style={S.th} rowSpan={2}>Shift</th>
+                        <th style={S.th} rowSpan={2}>Owner</th>
+                        <th style={S.th} rowSpan={2}>Operator</th>
+                        <th style={S.th} rowSpan={2}>Equipment</th>
+                        <th style={S.th} rowSpan={2}>Number</th>
+                        <th style={S.th} rowSpan={2}>Activity</th>
+                        <th style={S.th} rowSpan={2}>Location</th>
+                        <th style={S.th} colSpan={3}>Time Operation</th>
+                        <th style={S.th} rowSpan={2}>KWH/HM Start</th>
+                        <th style={S.th} rowSpan={2}>KWH/HM Finish</th>
+                        <th style={S.th} rowSpan={2}>Total KWH/HM</th>
+                        <th style={S.th} rowSpan={2}>Activity</th>
+                        <th style={S.th} rowSpan={2}>Remark</th>
+                      </tr>
+                      <tr>
+                        <th style={S.thSub}>Start</th>
+                        <th style={S.thSub}>End</th>
+                        <th style={S.thSub}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dupRows.map((row, i) => {
+                        const total = hitungTotal(row.time_start, row.time_end)
+                        const totalHM = row.hm_start && row.hm_finish
+                          ? (parseFloat(row.hm_finish) - parseFloat(row.hm_start)).toFixed(1) : '-'
+                        const fdList = [...Array.from({length: 49}, (_, j) => `FD${String(23001+j).padStart(5,'0')}`), 'FD23209','FD23213','FD23214','FD23215']
+                        const fdIdx = fdList.indexOf(row.equipment)
+                        const isEven = fdIdx % 2 === 0
+                        const rowBg = isEven ? shiftKind.bg : 'transparent'
+                        const upd = (field, val) => setDupRows(prev => prev.map((r,ri) => ri===i ? {...r, [field]: val} : r))
+                        const dupInput = (field, extra={}) => ({
+                          value: row[field] ?? '',
+                          onChange: e => upd(field, e.target.value),
+                          style: S.tdInput,
+                          onCopy: e => { e.clipboardData.setData('text/plain', row[field] ?? ''); e.preventDefault() },
+                          onCut: e => { e.clipboardData.setData('text/plain', row[field] ?? ''); upd(field, ''); e.preventDefault() },
+                          onPaste: e => { e.preventDefault(); upd(field, e.clipboardData.getData('text').trim()) },
+                          ...extra,
+                        })
+                        return (
+                          <tr key={row.id} style={{ background: rowBg }}>
+                            <td style={{ ...S.td, fontSize: 11, color: t.subtitle }}>{tanggal || '—'}</td>
+                            <td style={S.td}><span style={S.shiftBadge(shiftKind)}>{shift}</span></td>
+                            <td style={S.td}>
+                              <input {...dupInput('owner')} placeholder="WBS" />
+                            </td>
+                            <td style={S.td}>
+                              <AutocompleteInput
+                                value={row.operator}
+                                onChange={val => upd('operator', val)}
+                                options={getOperatorList(row.equipment)}
+                                placeholder="Nama operator"
+                                inputStyle={S.tdInput}
+                              />
+                            </td>
+                            <td style={S.td}>
+                              <AutocompleteInput
+                                value={row.equipment}
+                                onChange={val => upd('equipment', val)}
+                                options={listUnit.map(u => u.unit_wbs)}
+                                placeholder="Kode unit"
+                                inputStyle={{ ...S.tdInput, fontWeight: 700, color: shiftKind.text }}
+                              />
+                            </td>
+                            <td style={S.td}>
+                              <input {...dupInput('number')} type="number" style={{ ...S.tdInput, textAlign: 'center' }} placeholder="—" />
+                            </td>
+                            <td style={S.td}>
+                              <AutocompleteInput
+                                value={row.activity_code}
+                                onChange={val => {
+                                  const kode = val.includes(' — ') ? val.split(' — ')[0] : val
+                                  const found = ACTIVITY_CODES.find(a => a.kode === kode)
+                                  upd('activity_code', kode)
+                                  if (found) upd('activity_desc', found.desc)
+                                }}
+                                options={ACTIVITY_CODES.map(a => a.kode + ' — ' + a.desc)}
+                                placeholder="Kode aktivitas"
+                                inputStyle={S.tdInput}
+                              />
+                            </td>
+                            <td style={S.td}>
+                              <input {...dupInput('location')} placeholder="TJB" />
+                            </td>
+                            <td style={S.td}>
+                              <input {...dupInput('time_start', { maxLength: 5, onChange: e => upd('time_start', fmtTime(e.target.value)) })} placeholder="--:--" />
+                            </td>
+                            <td style={S.td}>
+                              <input {...dupInput('time_end', { maxLength: 5, onChange: e => upd('time_end', fmtTime(e.target.value)) })} placeholder="--:--" />
+                            </td>
+                            <td style={S.td}><span style={S.badge(total)}>{total}</span></td>
+                            <td style={S.td}>
+                              <input {...dupInput('hm_start', { inputMode: 'decimal', onChange: e => upd('hm_start', fmtNum(e.target.value)) })} placeholder="0" />
+                            </td>
+                            <td style={S.td}>
+                              <input {...dupInput('hm_finish', { inputMode: 'decimal', onChange: e => upd('hm_finish', fmtNum(e.target.value)) })} placeholder="0" />
+                            </td>
+                            <td style={S.td}><span style={S.badge(totalHM)}>{totalHM}</span></td>
+                            <td style={{ ...S.td, fontSize: 11, color: t.subtitle }}>{row.activity_desc || '—'}</td>
+                            <td style={S.td}>
+                              <input value={row.remark} onChange={e => upd('remark', e.target.value)} style={S.tdInput} placeholder="Keterangan" />
+                            </td>
+                            <td style={{ ...S.td, whiteSpace: 'nowrap' }}>
+                              <button className="ts-btn" onClick={() => setDupRows(prev => prev.filter((_,ri) => ri !== i))} title="Hapus baris" style={S.btnDel}>✕</button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ marginTop: 16, display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <button className="ts-btn" onClick={() => setActiveTab('template')} style={S.btnAdd}>← Kembali ke Template</button>
+                  <span style={S.dim}>{dupRows.length} baris · {[...new Set(dupRows.map(r=>r.equipment))].length} unit FD</span>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
